@@ -421,6 +421,9 @@ const tag = (tag) => (
   props = EMPTY_OBJ,
   children = props.tag != null || Array.isArray(props) ? props : EMPTY_ARR
 ) => h(tag, props === children ? EMPTY_OBJ : props, children);
+
+const a = tag("a");
+const p = tag("p");
 const h1 = tag("h1");
 const li = tag("li");
 const ul = tag("ul");
@@ -428,7 +431,7 @@ const main = tag("main");
 const span = tag("span");
 const input = tag("input");
 const button = tag("button");
-const header = tag("header");
+const footer = tag("footer");
 const section = tag("section");
 
 // IO Utilities
@@ -445,13 +448,54 @@ const _focuser = (_dispatch, options) => {
   });
 };
 
+/** @type {(...arg:any[])=>[any, any]} */
 const focuser = (selector) => [_focuser, { selector }];
 
-// import { app } from 'https://unpkg.com/hyperapp';
+const _dispatcher = (dispatch, options) => {
+  dispatch(options.action, options.payload);
+};
 
-//////////
-// ACTIONS
-//////////
+/** @type {(...arg:any[])=>[any, any]} */
+const dispatcher = (action, payload) => [
+  _dispatcher,
+  { action, payload },
+];
+
+const _onhashchange = (dispatch, options) => {
+  const handler = () => dispatch(options.action, location.hash);
+  addEventListener('hashchange', handler);
+  requestAnimationFrame(handler);
+  return () => removeEventListener('hashchange', handler);
+};
+
+/** @type {(...arg:any[])=>[any, any]} */
+const onhashchange = (action) => [_onhashchange, { action }];
+
+const _persister = (dispatch, options) => {
+  requestAnimationFrame((_) =>
+    localStorage.setItem(options.key, JSON.stringify(options.watch))
+  );
+  return () => {};
+};
+
+/** @type {(...arg:any[])=>[any, any]} */
+const persister = (key, watch) => [_persister, { key, watch }];
+
+const _lsloader = (dispatch, options) => {
+  let data = localStorage.getItem(options.key);
+  if (!data) return;
+  data = JSON.parse(data);
+  dispatch(options.action, data);
+};
+
+/** @type {(...arg:any[])=>[any, any]} */
+const lsloader = (key, action) => [_lsloader, { key, action }];
+
+// 1. perform logic (Effect) with the called action
+// 2. use selector: ... as payload for the focusEffect as an argument
+// [focusEffect, { selector: '.itemlist input[type=text]' }],
+const withFocus = (action, selector) => (state) =>
+  [state, dispatcher(action), focuser(selector)];
 
 // Universal utility action that returns a wrapping action (state, payload)
 const withEnterKey = (action) => (state, payload) => {
@@ -465,36 +509,366 @@ const withTargetValue = (action) => (state, payload) => {
   return state;
 };
 
-// Gets the current value of the input field and put it in the state (newitem)
-const InputNewItem = (state, input) => ({
-  ...state,
-  newitem: input,
+const textInput = (props) =>
+  input({
+    ...props,
+    type: 'text',
+    value: props.value,
+    oninput: withTargetValue(props.oninput),
+    onkeypress: withEnterKey(props.ondone),
+  });
+
+const editable = ({ editing, ...inputProps }, content) =>
+  editing ? textInput({ ...inputProps, onblur: inputProps.ondone }) : content;
+
+const list = ({ items, render }) =>
+  ul(items.map((value, index) => li(render(value, index))));
+
+// Typescript
+/**
+ * @typedef TodoItemProps
+ * @property {boolean} editing
+ * @property {string} value
+ * @property {boolean} checked
+ * @property {import('hyperapp').Action<any, string>} oninput
+ * @property ondone
+ * @property ontoggle
+ * @property onedit
+ * @property ondelete
+ */
+
+var todoItem = (/** @type {TodoItemProps} */ props) =>
+  editable(
+    {
+      id: 'todo-input',
+      editing: props.editing,
+      value: props.value,
+      oninput: props.oninput,
+      ondone: props.ondone,
+    },
+    [
+      input({
+        type: 'checkbox',
+        checked: props.checked,
+        oninput: props.ontoggle,
+      }),
+      span(
+        {
+          onclick: withFocus(props.onedit, '#todo-input'),
+          class: { done: props.checked },
+        },
+        text(props.value)
+      ),
+      button({ onclick: props.ondelete }, text('X')),
+    ]
+  );
+
+// what actions can return
+// (state, payload) =>
+// => newState
+// [newState, [effectFn, options], [effectFn2, options2], ...] ]
+// actionFn
+// [actionFn, payload]
+
+const wire$2 = ({ get, set, onadd }) => {
+  // get(state) => myvalue
+  // set(state, newvalue) => newstate
+
+  // Gets the current value of the input field and put it in the state (newitem)
+  const InputNewItem = (state, input) => set(state, input);
+
+  // if the input field is empty, don't add the item to the list, else put it in the iters[] array
+  const AddItem = (state) => {
+    let value = get(state);
+    if (!value) return state;
+    state = set(state, null);
+    state = onadd(state, value);
+    return state;
+  };
+
+  return {
+    model: (state) => ({
+      value: get(state),
+      InputNewItem,
+      AddItem,
+    }),
+  };
+};
+
+const view$1 = (model) => [
+  textInput({
+    value: model.value,
+    oninput: model.InputNewItem, // 1. when the input field changes, call the InputNewItem action
+    placeholder: 'What do you need to do?',
+    ondone: model.AddItem, // 2. when the enter key is pressed or button is clicked, call the AddItem action
+  }),
+  button({ onclick: model.AddItem }, text('+')),
+];
+
+const init$3 = () => null;
+
+const init$2 = () => ({
+  items: [],
+  done: [],
+  editing: null,
 });
 
-// if the input field is empty, don't add the item to the list, else put it in the iters[] array
-const AddItem = (state) =>
-  !state.newitem
-    ? state
-    : {
-        ...state, // get the current state
-        items: [state.newitem, ...state.items], // add the new item to the items array
-        done: [false, ...state.done], // add a new item to the done array with => done: false
-        newitem: null, // clear the input field
-      };
-
-const ToggleDone = (state, index) => {
-  let done = [...state.done]; // make a copy of the done array
-  done[index] = !done[index]; // toggle the done value by setting it to the opposite of what it is now
-  return { ...state, done }; // return the new state
+const toggleDone = (state, index) => {
+  let done = [...state.done];
+  done[index] = !done[index];
+  return { ...state, done };
 };
 
-const Delete = (state, index) => {
+const dlete = (state, index) => {
   let items = [...state.items];
   let done = [...state.done];
-  items.splice(index, 1); // remove the item from the items array
-  done.splice(index, 1); // remove the item from the done array
-  return { ...state, items, done }; // return the copies of the old state, but with the item at index removed
+  items.splice(index, 1);
+  done.splice(index, 1);
+  return { ...state, items, done };
 };
+
+const startEditing = (state, index) => ({
+  ...state,
+  editing: index,
+});
+
+const stopEditing = (state) => ({
+  ...state,
+  editing: null,
+});
+
+const inputEditing = (state, input) => {
+  let items = [...state.items];
+  items[state.editing] = input;
+  return { ...state, items };
+};
+
+const addItem$1 = (state, newitem) => ({
+  ...state,
+  items: [newitem, ...state.items],
+  done: [false, ...state.done],
+});
+
+const isAllDone = (state) =>
+  state.done.reduce((all, me) => all && me, true);
+
+const setAllDone = (state, value) => ({
+  ...state,
+  done: state.done.map(() => value),
+});
+
+const getNbrOfItems = (state) => state.items.length;
+
+const getNbrOfCompleted = (state) =>
+  state.done.filter((done) => done).length;
+
+const getNbrOfActive = (state) =>
+  state.done.filter((done) => !done).length;
+
+const clearCompleted = (state) => {
+  let done = state.done.filter((done) => !done);
+  let items = state.items.filter((_, index) => !state.done[index]);
+  return { ...state, items, done };
+};
+
+const init$1 = init$2;
+
+const wire$1 = ({ get, set }) => {
+  const map = (fn) => (state, payload) => set(state, fn(get(state), payload));
+  return {
+    model: (state) => ({
+      ...get(state),
+      ToggleDone: map(toggleDone),
+      Delete: map(dlete),
+      StartEditing: map(startEditing),
+      StopEditing: map(stopEditing),
+      InputEditing: map(inputEditing),
+      SetAllDone: map(setAllDone),
+      ClearCompleted: map(clearCompleted),
+    }),
+    addItem: map(addItem$1),
+    isItems: (state) => !!getNbrOfItems(get(state)),
+  };
+};
+
+const view = ({ filter, ...model }) =>
+  list({
+    items: model.items,
+    props: (index) => ({
+      hidden:
+        (filter === 'completed' && !model.done[index]) ||
+        (filter === 'active' && model.done[index]),
+    }),
+    render: (_, index) =>
+      todoItem({
+        value: model.items[index],
+        editing: model.editing === index,
+        checked: model.done[index],
+        onedit: [model.StartEditing, index],
+        oninput: model.InputEditing,
+        ondone: model.StopEditing,
+        ontoggle: [model.ToggleDone, index],
+        ondelete: [model.Delete, index],
+      }),
+  });
+
+const allCheck = (model) => {
+  let allDone = isAllDone(model);
+
+  return input({
+    type: 'checkbox',
+    style: { visibility: model.items.length ? 'visible' : 'hidden' },
+    checked: allDone,
+    oninput: [model.SetAllDone, !allDone],
+  });
+};
+
+const itemCount = (model) => {
+  let n = getNbrOfActive(model);
+  return p(text(n + ' items left'));
+};
+
+const clearButton = (model) => {
+  let n = getNbrOfCompleted(model);
+  if (!n) return false;
+  return button({ onclick: model.ClearCompleted }, text('Clear completed'));
+};
+
+const init = () => null;
+
+const wire = ({ get, set }) => {
+  const HashHandler = (state, hash) =>
+    set(
+      state,
+      hash === '#completed'
+        ? 'completed'
+        : hash === '#active'
+        ? 'active'
+        : 'all'
+    );
+  return {
+    model: (state) => ({
+      filter: get(state),
+      HashHandler,
+    }),
+    getFilter: get,
+  };
+};
+
+const menu = (model) =>
+  ul({ class: 'filters' }, [
+    li(
+      a({ href: '#', class: { current: model.filter === 'all' } }, text('All'))
+    ),
+    li(
+      a(
+        {
+          href: '#completed',
+          class: { current: model.filter === 'completed' },
+        },
+        text('Completed')
+      )
+    ),
+    li(
+      a(
+        {
+          href: '#active',
+          class: { current: model.filter === 'active' },
+        },
+        text('Active')
+      )
+    ),
+  ]);
+
+const subs = (model) => [onhashchange(model.HashHandler)];
+
+// import { app } from 'https://unpkg.com/hyperapp';
+
+const filters = wire({
+  get: (state) => state.filter,
+  set: (state, filter) => ({ ...state, filter }),
+});
+
+const todoList = wire$1({
+  get: (state) => state.list,
+  set: (state, list) => ({ ...state, list }),
+});
+
+const addItem = wire$2({
+  get: (state) => state.newitem,
+  set: (state, newitem) => ({ ...state, newitem }),
+  onadd: todoList.addItem,
+});
+
+// Refactored code
+app({
+  init: [
+    { newitem: init$3(), list: init$1(), filter: init() },
+    focuser('.newitementry input[type=text]'),
+    lsloader('list-items', (state, data) => ({
+      ...state,
+      list: data,
+    })),
+  ],
+  view: (state, todos = todoList.model(state)) =>
+    main([
+      h('header', {}, h1(text('Todo App'))),
+      main([
+        section({ class: 'newitementry' }, [
+          allCheck(todos),
+          ...view$1(addItem.model(state)),
+        ]),
+        section(
+          { class: 'itemlist' },
+          view({
+            ...todos,
+            filter: filters.getFilter(state),
+          })
+        ),
+        todoList.isItems(state) &&
+          footer({ style: { color: 'red' } }, [
+            itemCount(todos),
+            menu(filters.model(state)),
+            clearButton(todos),
+          ]),
+      ]),
+    ]),
+  subscriptions: (state) => [
+    persister('list-items', state.list),
+    ...subs(filters.model(state)),
+  ],
+  node: document.getElementById('app'),
+});
+
+////////
+
+// const addItem = AddItem.wire({
+//   get: (state) => state.newitem,
+//   set: (state, newitem) => ({ ...state, newitem }),
+//   onadd: (state, newitem) => ({
+//     ...state,
+//     items: [newitem, ...state.items],
+//     done: [false, ...state.done],
+//   }),
+// });
+
+//////////
+// ACTIONS
+//////////
+
+// const ToggleDone = (state, index) => {
+//   let done = [...state.done]; // make a copy of the done array
+//   done[index] = !done[index]; // toggle the done value by setting it to the opposite of what it is now
+//   return { ...state, done }; // return the new state
+// };
+
+// const Delete = (state, index) => {
+//   let items = [...state.items];
+//   let done = [...state.done];
+//   items.splice(index, 1); // remove the item from the items array
+//   done.splice(index, 1); // remove the item from the done array
+//   return { ...state, items, done }; // return the copies of the old state, but with the item at index removed
+// };
 
 // const StartEditing = (state, index) => {
 //   // immediately start editing when the user clicks on an item
@@ -511,83 +885,47 @@ const Delete = (state, index) => {
 //   };
 // };
 
-const StartEditing = (state, index) => {
-  // 1. return data
-  return [
-    {
-      ...state,
-      editing: index,
-    },
-    // 2. perform logic (Effect) with the called action
-    // 3. use selector: ... as payload for the focusEffect as an argument
-    // [focusEffect, { selector: '.itemlist input[type=text]' }],
-    focuser('.itemlist input[type=text]'),
-  ];
-};
+// const StartEditing = (state, index) => ({ ...state, editing: index });
 
-const StopEditing = (state) => ({
-  ...state,
-  editing: null,
-});
+// const StopEditing = (state) => ({
+//   ...state,
+//   editing: null,
+// });
 
-const InputEditing = (state, input) => {
-  let items = [...state.items];
-  items[state.editing] = input;
-  return { ...state, items };
-};
+// const InputEditing = (state, input) => {
+//   let items = [...state.items];
+//   items[state.editing] = input;
+//   return { ...state, items };
+// };
 
-app({
-  init: { newitem: null, items: [], done: [] },
-  view: (state) =>
-    main([
-      header(h1(text('Todo App'))),
-      main([
-        section({ class: 'newitementry' }, [
-          input({
-            type: 'text',
-            value: state.newitem,
-            oninput: withTargetValue(InputNewItem), // 1. when the input field changes, call the InputNewItem action
-            placeholder: 'What do you need to do?',
-            onkeypress: withEnterKey(AddItem), // 2. when the enter key is pressed, call the withEnterKey action
-          }),
-          button({ onclick: AddItem }, text('+')), // 3. when the button is clicked, call the AddItem action
-        ]),
-        section({ class: 'itemlist' }, [
-          ul(
-            state.items.map(
-              (
-                itemText,
-                index // 3. map through the items array
-              ) =>
-                li(
-                  state.editing === index
-                    ? input({
-                        type: 'text',
-                        value: state.items[index],
-                        oninput: withTargetValue(InputEditing),
-                        onblur: StopEditing,
-                        onkeypress: withEnterKey(StopEditing),
-                      })
-                    : [
-                        input({
-                          type: 'checkbox',
-                          checked: state.done[index], // 4. return current done value
-                          oninput: [ToggleDone, index], // 5. when the checkbox changes, call the ToggleDone function with the index of the item => The payload (index) becomes the second argument to the action (ToggleDone).
-                        }),
-                        span(
-                          {
-                            onclick: [StartEditing, index],
-                            class: { done: state.done[index] },
-                          },
-                          text(itemText)
-                        ),
-                        button({ onclick: [Delete, index] }, text('x')),
-                      ]
-                )
-            )
-          ),
-        ]),
-      ]),
-    ]),
-  node: document.getElementById('app'),
-});
+// app({
+//   init: [
+//     { newitem: AddItem.init(), items: [], done: [] },
+//     focuser('.newitementry input[type=text]'),
+//   ], // array with initial state and focuser => when the app is loading it will already focus the input field
+//   view: (state) =>
+//     main([
+//       header(h1(text('Todo App'))),
+//       main([
+//         section({ class: 'newitementry' }, AddItem.view(addItem.model(state))),
+//         section(
+//           { class: 'itemlist' },
+//           list({
+//             items: state.items,
+//             render: (itemText, index) =>
+//               todoItem({
+//                 value: state.items[index],
+//                 editing: state.editing === index,
+//                 checked: state.done[index], // 4. return current done value
+//                 onedit: [StartEditing, index],
+//                 oninput: InputEditing,
+//                 ondone: StopEditing,
+//                 ontoggle: [ToggleDone, index], // 5. when the checkbox changes, call the ToggleDone function with the index of the item => The payload (index) becomes the second argument to the action (ToggleDone).
+//                 ondelete: [Delete, index],
+//               }),
+//           })
+//         ),
+//       ]),
+//     ]),
+//   node: document.getElementById('app'),
+// });

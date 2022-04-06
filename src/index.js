@@ -1,66 +1,106 @@
 // import { app } from 'https://unpkg.com/hyperapp';
-import { app } from 'hyperapp'; // used node_modules instead of hyperapp cdn
+import { h, app } from 'hyperapp'; // used node_modules instead of hyperapp cdn
 import {
   main,
   text,
-  input,
-  button,
-  ul,
-  li,
-  span,
   header,
   section,
   h1,
+  footer,
   // } from 'https://unpkg.com/@hyperapp/html?module';
 } from '@hyperapp/html';
-import { focuser } from './lib/io';
+import { focuser, lsloader, persister } from './lib/io';
+import { list } from './lib/view.js';
+import todoItem from './todo-item.js';
+import * as AddItem from './add-item.js';
+import * as TodoList from './todo-list.js';
+import * as Filters from './filters.js';
+
+const filters = Filters.wire({
+  get: (state) => state.filter,
+  set: (state, filter) => ({ ...state, filter }),
+});
+
+const todoList = TodoList.wire({
+  get: (state) => state.list,
+  set: (state, list) => ({ ...state, list }),
+});
+
+const addItem = AddItem.wire({
+  get: (state) => state.newitem,
+  set: (state, newitem) => ({ ...state, newitem }),
+  onadd: todoList.addItem,
+});
+
+// Refactored code
+app({
+  init: [
+    { newitem: AddItem.init(), list: TodoList.init(), filter: Filters.init() },
+    focuser('.newitementry input[type=text]'),
+    lsloader('list-items', (state, data) => ({
+      ...state,
+      list: data,
+    })),
+  ],
+  view: (state, todos = todoList.model(state)) =>
+    main([
+      h('header', {}, h1(text('Todo App'))),
+      main([
+        section({ class: 'newitementry' }, [
+          TodoList.allCheck(todos),
+          ...AddItem.view(addItem.model(state)),
+        ]),
+        section(
+          { class: 'itemlist' },
+          TodoList.view({
+            ...todos,
+            filter: filters.getFilter(state),
+          })
+        ),
+        todoList.isItems(state) &&
+          footer({ style: { color: 'red' } }, [
+            TodoList.itemCount(todos),
+            Filters.menu(filters.model(state)),
+            TodoList.clearButton(todos),
+          ]),
+      ]),
+    ]),
+  subscriptions: (state) => [
+    persister('list-items', state.list),
+    ...Filters.subs(filters.model(state)),
+  ],
+  node: document.getElementById('app'),
+});
+
+////////
+
+// const addItem = AddItem.wire({
+//   get: (state) => state.newitem,
+//   set: (state, newitem) => ({ ...state, newitem }),
+//   onadd: (state, newitem) => ({
+//     ...state,
+//     items: [newitem, ...state.items],
+//     done: [false, ...state.done],
+//   }),
+// });
 
 //////////
 // ACTIONS
 //////////
 
-// Universal utility action that returns a wrapping action (state, payload)
-const withEnterKey = (action) => (state, payload) => {
-  if (payload.key && payload.key === 'Enter') return [action, payload];
-  return state;
-};
+// const ToggleDone = (state, index) => {
+//   let done = [...state.done]; // make a copy of the done array
+//   done[index] = !done[index]; // toggle the done value by setting it to the opposite of what it is now
+//   return { ...state, done }; // return the new state
+// };
 
-const withTargetValue = (action) => (state, payload) => {
-  if (payload.target && payload.target.value)
-    return [action, payload.target.value];
-  return state;
-};
-
-// Gets the current value of the input field and put it in the state (newitem)
-const InputNewItem = (state, input) => ({
-  ...state,
-  newitem: input,
-});
-
-// if the input field is empty, don't add the item to the list, else put it in the iters[] array
-const AddItem = (state) =>
-  !state.newitem
-    ? state
-    : {
-        ...state, // get the current state
-        items: [state.newitem, ...state.items], // add the new item to the items array
-        done: [false, ...state.done], // add a new item to the done array with => done: false
-        newitem: null, // clear the input field
-      };
-
-const ToggleDone = (state, index) => {
-  let done = [...state.done]; // make a copy of the done array
-  done[index] = !done[index]; // toggle the done value by setting it to the opposite of what it is now
-  return { ...state, done }; // return the new state
-};
-
-const Delete = (state, index) => {
-  let items = [...state.items];
-  let done = [...state.done];
-  items.splice(index, 1); // remove the item from the items array
-  done.splice(index, 1); // remove the item from the done array
-  return { ...state, items, done }; // return the copies of the old state, but with the item at index removed
-};
+// const Delete = (state, index) => {
+//   let items = [...state.items];
+//   let done = [...state.done];
+//   items.splice(index, 1); // remove the item from the items array
+//   done.splice(index, 1); // remove the item from the done array
+//   return { ...state, items, done }; // return the copies of the old state, but with the item at index removed
+// };
 
 // const StartEditing = (state, index) => {
 //   // immediately start editing when the user clicks on an item
@@ -77,83 +117,47 @@ const Delete = (state, index) => {
 //   };
 // };
 
-const StartEditing = (state, index) => {
-  // 1. return data
-  return [
-    {
-      ...state,
-      editing: index,
-    },
-    // 2. perform logic (Effect) with the called action
-    // 3. use selector: ... as payload for the focusEffect as an argument
-    // [focusEffect, { selector: '.itemlist input[type=text]' }],
-    focuser('.itemlist input[type=text]'),
-  ];
-};
+// const StartEditing = (state, index) => ({ ...state, editing: index });
 
-const StopEditing = (state) => ({
-  ...state,
-  editing: null,
-});
+// const StopEditing = (state) => ({
+//   ...state,
+//   editing: null,
+// });
 
-const InputEditing = (state, input) => {
-  let items = [...state.items];
-  items[state.editing] = input;
-  return { ...state, items };
-};
+// const InputEditing = (state, input) => {
+//   let items = [...state.items];
+//   items[state.editing] = input;
+//   return { ...state, items };
+// };
 
-app({
-  init: { newitem: null, items: [], done: [] },
-  view: (state) =>
-    main([
-      header(h1(text('Todo App'))),
-      main([
-        section({ class: 'newitementry' }, [
-          input({
-            type: 'text',
-            value: state.newitem,
-            oninput: withTargetValue(InputNewItem), // 1. when the input field changes, call the InputNewItem action
-            placeholder: 'What do you need to do?',
-            onkeypress: withEnterKey(AddItem), // 2. when the enter key is pressed, call the withEnterKey action
-          }),
-          button({ onclick: AddItem }, text('+')), // 3. when the button is clicked, call the AddItem action
-        ]),
-        section({ class: 'itemlist' }, [
-          ul(
-            state.items.map(
-              (
-                itemText,
-                index // 3. map through the items array
-              ) =>
-                li(
-                  state.editing === index
-                    ? input({
-                        type: 'text',
-                        value: state.items[index],
-                        oninput: withTargetValue(InputEditing),
-                        onblur: StopEditing,
-                        onkeypress: withEnterKey(StopEditing),
-                      })
-                    : [
-                        input({
-                          type: 'checkbox',
-                          checked: state.done[index], // 4. return current done value
-                          oninput: [ToggleDone, index], // 5. when the checkbox changes, call the ToggleDone function with the index of the item => The payload (index) becomes the second argument to the action (ToggleDone).
-                        }),
-                        span(
-                          {
-                            onclick: [StartEditing, index],
-                            class: { done: state.done[index] },
-                          },
-                          text(itemText)
-                        ),
-                        button({ onclick: [Delete, index] }, text('x')),
-                      ]
-                )
-            )
-          ),
-        ]),
-      ]),
-    ]),
-  node: document.getElementById('app'),
-});
+// app({
+//   init: [
+//     { newitem: AddItem.init(), items: [], done: [] },
+//     focuser('.newitementry input[type=text]'),
+//   ], // array with initial state and focuser => when the app is loading it will already focus the input field
+//   view: (state) =>
+//     main([
+//       header(h1(text('Todo App'))),
+//       main([
+//         section({ class: 'newitementry' }, AddItem.view(addItem.model(state))),
+//         section(
+//           { class: 'itemlist' },
+//           list({
+//             items: state.items,
+//             render: (itemText, index) =>
+//               todoItem({
+//                 value: state.items[index],
+//                 editing: state.editing === index,
+//                 checked: state.done[index], // 4. return current done value
+//                 onedit: [StartEditing, index],
+//                 oninput: InputEditing,
+//                 ondone: StopEditing,
+//                 ontoggle: [ToggleDone, index], // 5. when the checkbox changes, call the ToggleDone function with the index of the item => The payload (index) becomes the second argument to the action (ToggleDone).
+//                 ondelete: [Delete, index],
+//               }),
+//           })
+//         ),
+//       ]),
+//     ]),
+//   node: document.getElementById('app'),
+// });
